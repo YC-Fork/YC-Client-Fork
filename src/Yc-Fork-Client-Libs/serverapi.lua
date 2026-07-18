@@ -32,8 +32,7 @@ end
 -- Look at the [Documentation](https://commandcracker.github.io/YC-Forke/) for moor information
 -- Contact the server owner on Discord, when the server is down
 local servers = {
-    --"wss://dev.music.papi.beltboys.nl",
-    "wss://music.papi.beltboys.nl"
+    "wss://ycfork.beltboys.nl"
 }
 
 if settings then
