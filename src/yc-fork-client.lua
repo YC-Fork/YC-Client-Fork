@@ -833,33 +833,67 @@ local function main()
     serverapi:detect_bestest_server(args.server, args.verbose)
     pcall(update_checker)
 
-    if not args.URL then
-        print("Enter a URL or search term (YouTube/Spotify/live streams supported). Controls: R=repeat, A=previous, D=next.")
-        term.setTextColor(colors.lightGray)
-        args.URL = read()
-        term.setTextColor(colors.white)
-    end
-
-    local playlist_videos, reason = play(args.URL)
-
-    while reason == "restart" do
-        playlist_videos, reason = play(args.URL)
-    end
-
-    if args.loop == true then
-        while true do
-            play(args.URL)
-        end
-    end
-    if playlist_videos then
-        if args.loop_playlist == true then
-            while true do
-                if playlist_videos then
-                    play_playlist(playlist_videos)
-                end
+    while true do
+        if not args.URL or args.URL == "" then
+            if not args.no_video then
+                libs.serverapi.reset_term()
+            end
+            local queued = serverapi:get_queued_media()
+            if queued and queued.url then
+                args.URL = queued.url
+            else
+                print("Enter a URL or search term (YouTube/Spotify/live streams supported). Controls: R=repeat, A=previous, D=next.")
+                write_colored("URL/Search: ", colors.lightGray)
+                parallel.waitForAny(
+                    function()
+                        args.URL = read()
+                    end,
+                    function()
+                        while true do
+                            local msg = serverapi:receive("play")
+                            if msg and msg.url then
+                                args.URL = msg.url
+                                break
+                            end
+                        end
+                    end
+                )
+            end
+            term.setTextColor(colors.white)
+            if not args.URL or args.URL:match("^%s*$") then
+                break
             end
         end
-        play_playlist(playlist_videos)
+
+        local current_url = args.URL
+        while current_url do
+            local playlist_videos, reason = play(current_url)
+
+            if reason == "restart" or (reason == "finished" and args.loop == true) then
+                -- loop again with the same url
+            elseif reason == "back" then
+                local prev = table.remove(back_buffer)
+                if prev then
+                    current_url = prev
+                else
+                    print("No previous track in history.")
+                end
+            else
+                -- reason is "skip" or "finished"
+                if playlist_videos then
+                    if args.loop_playlist == true then
+                        while true do
+                            play_playlist(playlist_videos)
+                        end
+                    else
+                        play_playlist(playlist_videos)
+                    end
+                end
+                current_url = nil
+            end
+        end
+
+        args.URL = nil
     end
 
     serverapi.websocket.close()

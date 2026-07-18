@@ -251,6 +251,15 @@ function API:request_media(url, width, height)
     --return self:receive({ ["media"] = true, ["status"] = true })
 end
 
+--- Get queued media from the server
+-- @treturn table json response
+function API:get_queued_media()
+    self:send({
+        ["action"] = "get_queued_media",
+    })
+    return self:receive("play")
+end
+
 --- Handshake - get Server capabilities and version
 --@treturn table json response
 function API:handshake()
