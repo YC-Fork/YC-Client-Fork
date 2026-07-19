@@ -347,14 +347,14 @@ local function play_audio(buffer, title, on_first_chunk)
             else
                 local chunk = buffer:next()
 
-                if buffer.filler.chunkindex == 1 then
-                    buffer.size = math.ceil(1024 / (#chunk / 16))
-                end
-
                 if chunk == "" then
                     eof = true
                     os.queueEvent("new_audio_chunk")
                     return
+                end
+
+                if buffer.filler.chunkindex == 1 then
+                    buffer.size = math.ceil(1024 / (#chunk / 16))
                 end
 
                 if not notified then
@@ -714,11 +714,18 @@ local function play(url)
                 libs.serverapi.reset_term()
             end
 
-            -- Re-queue control events so other coroutines can see them
+            -- Exit immediately on stop/skip so we don't make another blocking network call
             if event == "youcube:stop_command" or event == "youcube:skip_command" then
-                os.queueEvent(event)
-                -- yield so the hotkey_handler coroutine gets to run first
-                os.sleep(0)
+                if event == "youcube:stop_command" then
+                    exit_reason = "stop"
+                    if not args.no_video then libs.serverapi.reset_term() end
+                else
+                    exit_reason = "skip"
+                    back_buffer[#back_buffer + 1] = url
+                    if #back_buffer > max_back then table.remove(back_buffer, 1) end
+                    if not args.no_video then libs.serverapi.reset_term() end
+                end
+                return
             end
 
             if not args.no_audio then
