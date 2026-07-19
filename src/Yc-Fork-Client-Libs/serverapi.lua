@@ -103,9 +103,21 @@ function API:detect_bestest_server(_server, _verbose)
                 print(server)
                 term.setTextColor(colors.white)
                 if self.client_id then
+                    local nickname = ""
+                    if fs.exists("/youcube_nickname.txt") then
+                        local f = fs.open("/youcube_nickname.txt", "r")
+                        if f then
+                            nickname = f.readAll():gsub("^%s*(.-)%s*$", "%1")
+                            f.close()
+                        end
+                    end
                     term.write("Client id: ")
                     term.setTextColor(colors.lightGray)
-                    print(self.client_id)
+                    local id_str = self.client_id
+                    if nickname ~= "" then
+                        id_str = id_str .. " (" .. nickname .. ")"
+                    end
+                    print(id_str)
                     term.setTextColor(colors.white)
                 end
                 break
@@ -139,6 +151,25 @@ function API:receive(filter)
 
     if data == nil then
         error("Failed to parse message\n" .. err)
+    end
+
+    if data.action == "stop" or data.action == "skip" then
+        local evt = data.action == "stop" and "youcube:stop_command" or "youcube:skip_command"
+        os.queueEvent(evt)
+        -- Return a fake EOF response so any active buffer loops exit immediately
+        if filter == "chunk" then
+            return { action = "chunk", chunk = "" }
+        elseif filter == "vid" then
+            return { action = "vid", lines = {} }
+        else
+            return { action = filter or data.action }
+        end
+    end
+
+    if data.action == "set_volume" and data.volume ~= nil then
+        os.queueEvent("youcube:set_volume", data.volume)
+        -- transparent: retry receive to get the real next message
+        return self:receive(filter)
     end
 
     if filter then
@@ -263,9 +294,18 @@ end
 --- Handshake - get Server capabilities and version
 --@treturn table json response
 function API:handshake()
+    local nickname = ""
+    if fs.exists("/youcube_nickname.txt") then
+        local f = fs.open("/youcube_nickname.txt", "r")
+        if f then
+            nickname = f.readAll():gsub("^%s*(.-)%s*$", "%1")
+            f.close()
+        end
+    end
     self:send({
         ["action"] = "handshake",
         ["client_version"] = self.client_version,
+        ["nickname"] = nickname,
     })
     return self:receive("handshake")
 end

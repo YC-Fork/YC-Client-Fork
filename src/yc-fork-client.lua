@@ -589,6 +589,7 @@ local restart = false
 local skip_key = settings.get("youcube.keys.skip") or keys.d
 local restart_key = settings.get("youcube.keys.restart") or keys.r
 local back_key = settings.get("youcube.keys.back") or keys.a
+local stop_key = settings.get("youcube.keys.stop") or keys.q
 
 local function play(url)
     -- Refresh audio devices at the start of each track
@@ -648,7 +649,9 @@ local function play(url)
         end
         term.write("Playing: ")
         term.setTextColor(colors.lime)
-        print(data.title)
+        term.write(data.title)
+        term.setTextColor(colors.lightGray)
+        print(" (Press Q to stop)")
         term.setTextColor(colors.white)
         if buffer_x and buffer_y then
             term.setCursorPos(cur_x, cur_y)
@@ -709,6 +712,13 @@ local function play(url)
                 libs.serverapi.reset_term()
             end
 
+            -- Re-queue control events so other coroutines can see them
+            if event == "youcube:stop_command" or event == "youcube:skip_command" then
+                os.queueEvent(event)
+                -- yield so the hotkey_handler coroutine gets to run first
+                os.sleep(0)
+            end
+
             if not args.no_audio then
                 audio_buffer:fill()
             end
@@ -753,34 +763,64 @@ local function play(url)
 
     local function _hotkey_handler()
         while true do
-            local _, key = os.pullEvent("key")
+            local event, key = os.pullEvent()
 
-            if key == skip_key then
-                back_buffer[#back_buffer + 1] = url --finished playing, push the value to the back buffer
+            if event == "key" then
+                if key == skip_key then
+                    back_buffer[#back_buffer + 1] = url --finished playing, push the value to the back buffer
+                    if #back_buffer > max_back then
+                        table.remove(back_buffer, 1) --remove it from the front of the buffer
+                    end
+                    if not args.no_video then
+                        libs.serverapi.reset_term()
+                    end
+                    exit_reason = "skip"
+                    break
+                elseif key == restart_key then
+                    if not args.no_video then
+                        libs.serverapi.reset_term()
+                    end
+                    exit_reason = "restart"
+                    break
+                elseif key == back_key then
+                    if not args.no_video then
+                        libs.serverapi.reset_term()
+                    end
+                    exit_reason = "back"
+                    break
+                elseif key == stop_key then
+                    if not args.no_video then
+                        libs.serverapi.reset_term()
+                    end
+                    exit_reason = "stop"
+                    break
+                end
+            elseif event == "youcube:stop_command" then
+                if not args.no_video then
+                    libs.serverapi.reset_term()
+                end
+                exit_reason = "stop"
+                break
+            elseif event == "youcube:skip_command" then
+                back_buffer[#back_buffer + 1] = url
                 if #back_buffer > max_back then
-                    table.remove(back_buffer, 1) --remove it from the front of the buffer
+                    table.remove(back_buffer, 1)
                 end
                 if not args.no_video then
                     libs.serverapi.reset_term()
                 end
                 exit_reason = "skip"
                 break
-            end
-
-            if key == restart_key then
-                if not args.no_video then
-                    libs.serverapi.reset_term()
+            elseif event == "youcube:set_volume" then
+                local new_vol = key -- second return value from pullEvent is the volume
+                if type(new_vol) == "number" then
+                    for _, dev in ipairs(audiodevices) do
+                        if dev.speaker and not dev.dead then
+                            dev.volume = new_vol
+                        end
+                    end
+                    print("Volume: " .. math.floor(new_vol / 3.0 * 100 + 0.5) .. "%")
                 end
-                exit_reason = "restart"
-                break
-            end
-
-             if key == back_key then
-                 if not args.no_video then
-                     libs.serverapi.reset_term()
-                 end
-                 exit_reason = "back"
-                 break
             end
         end
     end
@@ -825,6 +865,9 @@ local function play_playlist(playlist)
              if prev then
                  table.insert(queue, 1, prev)
              end
+        elseif reason == "stop" then
+             queue = {}
+             break
         end
     end
 end
@@ -833,7 +876,12 @@ local function main()
     serverapi:detect_bestest_server(args.server, args.verbose)
     pcall(update_checker)
 
+    local default_no_video = args.no_video
+    local default_no_audio = args.no_audio
+
     while true do
+        args.no_video = default_no_video
+        args.no_audio = default_no_audio
         if not args.URL or args.URL == "" then
             if not args.no_video then
                 libs.serverapi.reset_term()
@@ -841,7 +889,30 @@ local function main()
             local queued = serverapi:get_queued_media()
             if queued and queued.url then
                 args.URL = queued.url
+                if queued.no_video ~= nil then
+                    args.no_video = queued.no_video
+                end
             else
+                local nickname = ""
+                if fs.exists("/youcube_nickname.txt") then
+                    local f = fs.open("/youcube_nickname.txt", "r")
+                    if f then
+                        nickname = f.readAll():gsub("^%s*(.-)%s*$", "%1")
+                        f.close()
+                    end
+                end
+                term.write("Connected: ")
+                term.setTextColor(colors.blue)
+                print(serverapi.websocket and serverapi.websocket.url or "Server")
+                term.setTextColor(colors.white)
+                term.write("Client id: ")
+                term.setTextColor(colors.lightGray)
+                local id_str = serverapi.client_id or "unknown"
+                if nickname ~= "" then
+                    id_str = id_str .. " (" .. nickname .. ")"
+                end
+                print(id_str)
+                term.setTextColor(colors.white)
                 print("Enter a URL or search term (YouTube/Spotify/live streams supported). Controls: R=repeat, A=previous, D=next.")
                 write_colored("URL/Search: ", colors.lightGray)
                 parallel.waitForAny(
@@ -850,9 +921,13 @@ local function main()
                     end,
                     function()
                         while true do
-                            local msg = serverapi:receive("play")
-                            if msg and msg.url then
-                                args.URL = msg.url
+                            sleep(2)
+                            local q = serverapi:get_queued_media()
+                            if q and q.url then
+                                args.URL = q.url
+                                if q.no_video ~= nil then
+                                    args.no_video = q.no_video
+                                end
                                 break
                             end
                         end
