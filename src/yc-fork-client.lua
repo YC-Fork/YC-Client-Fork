@@ -14,7 +14,7 @@ local function is_lib(libs, lib)
     return false
 end
 
-local libs = { "serverapi", "numberformatter", "semver", "argparse", "string_pack", "ui" }
+local libs = { "serverapi", "numberformatter", "semver", "argparse", "string_pack" }
 local lib_paths = { ".", "./Yc-Fork-Client-Libs", "./apis", "./modules", "/", "/lib", "/apis", "/modules", "/Yc-Fork-Client-Libs" }
 
 -- LevelOS Support
@@ -591,8 +591,7 @@ local restart_key = settings.get("youcube.keys.restart") or keys.r
 local back_key = settings.get("youcube.keys.back") or keys.a
 local stop_key = settings.get("youcube.keys.stop") or keys.q
 
--- Persistent volume state (0.0 - 3.0), starts at args.volume
-local ui_volume = args.volume
+
 
 local function play(url)
     -- Refresh audio devices at the start of each track
@@ -817,7 +816,7 @@ local function play(url)
             elseif event == "youcube:set_volume" then
                 local new_vol = key -- second return value from pullEvent is the volume
                 if type(new_vol) == "number" then
-                    ui_volume = new_vol  -- keep UI in sync
+                    args.volume = new_vol
                     for _, dev in ipairs(audiodevices) do
                         if dev.speaker and not dev.dead then
                             dev.volume = new_vol
@@ -829,12 +828,8 @@ local function play(url)
         end
     end
 
-    -- UI handler is defined in yc-fork-ui.lua to keep this file clean.
-    -- make_ui_handler returns a coroutine function compatible with parallel.waitForAny.
-    local _ui_handler = libs.ui.make_ui_handler(data, audiodevices, back_key, stop_key, skip_key, ui_volume)
-
     -- Run everything in parallel; any coroutine finishing stops all others.
-    parallel.waitForAny(fill_buffers, _play_media, _hotkey_handler, _ui_handler)
+    parallel.waitForAny(fill_buffers, _play_media, _hotkey_handler)
 
     if exit_reason == "finished" then
         back_buffer[#back_buffer + 1] = url
@@ -881,7 +876,7 @@ local function play_playlist(playlist)
 end
 
 local function main()
-    serverapi:detect_bestest_server(args.server, args.verbose)
+    serverapi:detect_bestest_server(args.server, args.verbose, args.volume)
     pcall(update_checker)
 
     local default_no_video = args.no_video

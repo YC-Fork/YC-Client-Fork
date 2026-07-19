@@ -71,7 +71,7 @@ local function websocket_with_timeout(_url, _headers, _timeout)
 end
 
 --- Connects to a YC-Fork Server
-function API:detect_bestest_server(_server, _verbose)
+function API:detect_bestest_server(_server, _verbose, volume)
     if _server then
         table.insert(servers, 1, _server)
     end
@@ -88,7 +88,7 @@ function API:detect_bestest_server(_server, _verbose)
 
             if websocket ~= false then
                 self.websocket = websocket
-                local handshake = self:handshake()
+                local handshake = self:handshake(volume)
                 if handshake.action ~= "handshake" then
                     self.websocket.close()
                     error("Server rejected connection due to version mismatch")
@@ -153,6 +153,11 @@ function API:receive(filter)
         error("Failed to parse message\n" .. err)
     end
 
+    -- Extract volume from any incoming packet payload
+    if data.volume ~= nil then
+        os.queueEvent("youcube:set_volume", data.volume)
+    end
+
     if data.action == "stop" or data.action == "skip" then
         local evt = data.action == "stop" and "youcube:stop_command" or "youcube:skip_command"
         os.queueEvent(evt)
@@ -164,12 +169,6 @@ function API:receive(filter)
         else
             return { action = filter or data.action }
         end
-    end
-
-    if data.action == "set_volume" and data.volume ~= nil then
-        os.queueEvent("youcube:set_volume", data.volume)
-        -- transparent: retry receive to get the real next message
-        return self:receive(filter)
     end
 
     if filter then
@@ -293,7 +292,7 @@ end
 
 --- Handshake - get Server capabilities and version
 --@treturn table json response
-function API:handshake()
+function API:handshake(volume)
     local nickname = ""
     if fs.exists("/youcube_nickname.txt") then
         local f = fs.open("/youcube_nickname.txt", "r")
@@ -306,6 +305,7 @@ function API:handshake()
         ["action"] = "handshake",
         ["client_version"] = self.client_version,
         ["nickname"] = nickname,
+        ["volume"] = volume,
     })
     return self:receive("handshake")
 end
