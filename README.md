@@ -1,59 +1,57 @@
 # YC-Client-Fork (v2.00.001)
 
-This repository contains the client player and library for **YC-Fork** running on Minecraft [ComputerCraft: Tweaked](https://tweaked.cc/).
+A feature-packed client for playing music, videos, radio stations, and live streams in Minecraft using [ComputerCraft: Tweaked](https://tweaked.cc/).
 
-## Features
+Works together with [YC-Server-Fork](https://github.com/YC-Fork/YC-Server-Fork).
 
-- **Music & Video Playback**: Supports YouTube, Spotify, direct audio/video URLs, and local files.
-- **Radio Stations & Live Streams**: Full support for Dutch/International live radio streams and YouTube/Twitch live broadcasts with a pulsing `🔴 LIVE STREAM` indicator.
-- **Metadata Marquee Carousel**: Smooth scrolling ticker for long track titles and metadata (`By: Artist | Views: ... | Likes: ...`).
-- **Remote Synchronization**: Fully synchronized with the YC-Fork Server Web Dashboard for remote seeking, volume control, skipping, stopping, and restarting.
-- **Robust Reconnection UI**: Pixel-perfect connection loss handling showing `[!] SERVER UNREACHABLE` or `[!] CONNECTION TO SERVER LOST` with a 5-second retry countdown and an interactive red `[ Exit (Q) ]` button.
-- **Non-Blocking Coroutines**: Event-stealing prevention for 100% responsive UI hotkeys and smooth DFPWM audio chunk streaming.
+---
+
+## What's New in Version 2.00.001
+
+- **Marquee Scrolling**: Long track titles and metadata (Artist, Views, Likes) automatically scroll as a smooth ticker.
+- **Improved Reconnect Screen**: Shows `SERVER UNREACHABLE` or `CONNECTION TO SERVER LOST` with a 5-second retry countdown and an `[ Exit (Q) ]` button to quit anytime.
+- **Dashboard Remote Control**: Full support for seeking, volume adjustments, skip, stop, and restart directly from the server's web dashboard.
+- **Zero-Delay Audio Seeking**: Seek forward or backward without audio cutouts or freezing.
+- **Live Stream Badge**: Pulsing `🔴 LIVE STREAM` indicator for YouTube/Twitch streams and radio stations.
 
 ---
 
 ## Installation
 
-Run this command in ComputerCraft:
+Run this command on your ComputerCraft computer or monitor:
+
 ```lua
 wget run https://raw.githubusercontent.com/YC-Fork/YC-Client-Fork/main/installer.lua
 ```
 
 ---
 
-## CLI Usage
+## How to Use
 
 ```bash
 yc-fork-client [options] [URL or search term...]
 ```
 
-### Arguments:
-- `URL or search term` *(optional)*: If omitted, the client enters the **READY TO PLAY!** interactive screen.
+### Quick Commands / Hotkeys
+- **Q**: Stop playing or exit reconnect screen
+- **D**: Skip song
+- **A**: Previous song (Back)
+- **R**: Restart current song from start
+- **Mouse / Touch Screen**: Click UI buttons to adjust volume, skip, stop, restart, or seek.
 
-### Options:
-- `-v`, `--verbose`: Enable verbose debug output.
-- `-V`, `--volume <0-300>`: Set initial audio volume (default `100%` / value `1.0`).
-- `-s`, `--server <address>`: Connect to a specific YC-Fork server (e.g. `ycfork.beltboys.nl`).
-- `--nv`, `--no-video`: Disable video output (Audio-only player mode).
-- `--na`, `--no-audio`: Disable audio output (Video-only player mode).
-- `--sh`, `--shuffle`: Shuffle playlist before playing.
-- `-l`, `--loop`: Loop current media item continuously.
-- `--lp`, `--loop-playlist`: Loop the current playlist.
-- `--fps <number>`: Force Sanjuuni frame rate for video output.
-
----
-
-## In-Game Controls & Hotkeys
-
-- **Q**: Stop playback / Exit reconnect screen
-- **D**: Skip to next track
-- **A**: Previous track (Back)
-- **R**: Repeat current track from 0:00
-- **Touch / Mouse Click**: Interactive UI buttons for Seek, Volume, Stop, Skip, and Repeat.
+### CLI Options
+- `-v`, `--verbose`: Show debug logs.
+- `-V`, `--volume <0-300>`: Set starting volume (default: 100).
+- `-s`, `--server <address>`: Connect to a custom server (e.g. `ycfork.beltboys.nl`).
+- `--nv`, `--no-video`: Audio-only mode (saves bandwidth).
+- `--na`, `--no-audio`: Video-only mode.
+- `--sh`, `--shuffle`: Shuffle playlist.
+- `-l`, `--loop`: Loop current song.
+- `--lp`, `--loop-playlist`: Loop full playlist.
+- `--fps <number>`: Set target video frame rate.
 
 ---
 
-## Hosting Your Server
-For server setup and web admin dashboard configuration, check out the server repository:
+## Server Setup
+To host your own server or use the web dashboard, visit:
 https://github.com/YC-Fork/YC-Server-Fork
