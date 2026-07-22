@@ -20,12 +20,23 @@ _   _ ____ _  _ ____ _  _ ___  ____ ____ ___  _
 ]]
 local API = {}
 
+local function is_compatible_version(v1, v2)
+    if not v1 or not v2 then return false end
+    local m1, min1 = tostring(v1):match("^([^%.]+)%.([^%.]+)")
+    local m2, min2 = tostring(v2):match("^([^%.]+)%.([^%.]+)")
+    if m1 and m2 and min1 and min2 then
+        return tonumber(m1) == tonumber(m2) and tonumber(min1) == tonumber(min2)
+    end
+    return v1 == v2
+end
+
 --- Create's a new API instance.
 -- @param websocket [Websocket](https://tweaked.cc/module/http.html#ty:Websocket) The websocket.
 -- @treturn API instance
 function API.new(websocket)
     return setmetatable({
         websocket = websocket,
+        client_version = "2.00.001",
     }, { __index = API })
 end
 
@@ -73,7 +84,10 @@ end
 --- Connects to a YC-Fork Server
 function API:detect_bestest_server(_server, _verbose, volume)
     if _server then
+        self.server_url = _server
         table.insert(servers, 1, _server)
+    else
+        self.server_url = self.server_url or servers[1]
     end
 
     for i = 1, #servers do
@@ -88,37 +102,42 @@ function API:detect_bestest_server(_server, _verbose, volume)
 
             if websocket ~= false then
                 self.websocket = websocket
+                self.server_url = server
                 local handshake = self:handshake(volume)
                 if handshake.action ~= "handshake" then
                     self.websocket.close()
                     error("Server rejected connection due to version mismatch")
                 end
-                if self.client_version and handshake.server and handshake.server.version ~= self.client_version then
-                    self.websocket.close()
-                    error("Server version mismatch")
+                if self.client_version and handshake.server and handshake.server.version then
+                    if not is_compatible_version(handshake.server.version, self.client_version) then
+                        self.websocket.close()
+                        error("Server version mismatch (Server: " .. tostring(handshake.server.version) .. ", Client: " .. tostring(self.client_version) .. ")")
+                    end
                 end
                 self.client_id = handshake.client_id
-                term.write("Connected: ")
-                term.setTextColor(colors.blue)
-                print(server)
-                term.setTextColor(colors.white)
-                if self.client_id then
-                    local nickname = ""
-                    if fs.exists("/youcube_nickname.txt") then
-                        local f = fs.open("/youcube_nickname.txt", "r")
-                        if f then
-                            nickname = f.readAll():gsub("^%s*(.-)%s*$", "%1")
-                            f.close()
-                        end
-                    end
-                    term.write("Client id: ")
-                    term.setTextColor(colors.lightGray)
-                    local id_str = self.client_id
-                    if nickname ~= "" then
-                        id_str = id_str .. " (" .. nickname .. ")"
-                    end
-                    print(id_str)
+                if _verbose then
+                    term.write("Connected: ")
+                    term.setTextColor(colors.blue)
+                    print(server)
                     term.setTextColor(colors.white)
+                    if self.client_id then
+                        local nickname = ""
+                        if fs.exists("/youcube_nickname.txt") then
+                            local f = fs.open("/youcube_nickname.txt", "r")
+                            if f then
+                                nickname = f.readAll():gsub("^%s*(.-)%s*$", "%1")
+                                f.close()
+                            end
+                        end
+                        term.write("Client id: ")
+                        term.setTextColor(colors.lightGray)
+                        local id_str = self.client_id
+                        if nickname ~= "" then
+                            id_str = id_str .. " (" .. nickname .. ")"
+                        end
+                        print(id_str)
+                        term.setTextColor(colors.white)
+                    end
                 end
                 break
             elseif i == #servers then
@@ -140,7 +159,7 @@ end
 function API:receive(filter)
     local status, retval = pcall(self.websocket.receive)
     if not status then
-        error("Connection to server has been lost, reopen yc-fork-client.")
+        error("websocket_closed")
     end
 
     if retval == nil then
@@ -158,8 +177,9 @@ function API:receive(filter)
         os.queueEvent("youcube:set_volume", data.volume)
     end
 
-    if data.action == "stop" or data.action == "skip" then
-        local evt = data.action == "stop" and "youcube:stop_command" or "youcube:skip_command"
+    if data.action == "stop" or data.action == "skip" or data.action == "restart" then
+        self.pending_command = data.action
+        local evt = "youcube:" .. data.action .. "_command"
         os.queueEvent(evt)
         -- Return a fake EOF response so any active buffer loops exit immediately
         if filter == "chunk" then
@@ -188,9 +208,10 @@ end
 --- Send data to The YC-Fork Server
 -- @tparam table data data to send
 function API:send(data)
+    if not self.websocket then error("websocket_closed") end
     local status, retval = pcall(self.websocket.send, textutils.serialiseJSON(data))
     if not status then
-        error("Connection to server has been lost, reopen yc-fork-client.")
+        error("websocket_closed")
     end
 end
 
@@ -300,7 +321,24 @@ function API:handshake(volume)
             nickname = f.readAll():gsub("^%s*(.-)%s*$", "%1")
             f.close()
         end
+        pcall(fs.delete, "/youcube_nickname.txt")
+        local sf = fs.open("/ycfork_settings.txt", "w")
+        if sf then
+            sf.write(textutils.serialiseJSON({ nickname = nickname, queue_via_dashboard = true }))
+            sf.close()
+        end
+    elseif fs.exists("/ycfork_settings.txt") then
+        local f = fs.open("/ycfork_settings.txt", "r")
+        if f then
+            local content = f.readAll()
+            f.close()
+            local parsed = textutils.unserialiseJSON(content)
+            if type(parsed) == "table" and parsed.nickname then
+                nickname = tostring(parsed.nickname)
+            end
+        end
     end
+
     self:send({
         ["action"] = "handshake",
         ["client_version"] = self.client_version,
@@ -536,7 +574,7 @@ function Buffer.new(filler, size)
 
     function self:next()
         while #self.buffer == 0 do
-            os.pullEvent()
+            sleep(0.05)
         end -- Wait until next is available
         local next = self.buffer[1]
         table.remove(self.buffer, 1)
