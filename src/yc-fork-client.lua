@@ -768,8 +768,10 @@ local function play(url)
     end
 
     local start_time = os.clock()
+    local playing_started = false
     local function announce_playing()
         start_time = os.clock()
+        playing_started = true
         pcall(function() serverapi:send({ action = "seek_notify", timestamp = 0 }) end)
     end
 
@@ -999,7 +1001,7 @@ local function play(url)
             sleep(0.35)
             tick = tick + 1
             if args.no_video then
-                local elapsed = os.clock() - start_time
+                local elapsed = playing_started and (os.clock() - start_time) or 0
                 draw_audio_player_screen(data, args, tick, nil, elapsed)
             end
         end

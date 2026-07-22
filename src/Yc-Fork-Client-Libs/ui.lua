@@ -196,7 +196,18 @@ function UI.render_audio_to_target(tgt, data, args, scroll_pos, status_msg, vers
         local elapsed = elapsed_secs or 0
         local bar_w = math.max(4, math.min(14, w - 28))
 
-        if duration and type(duration) == "number" and duration > 0 then
+        local is_buffering = (status_msg == "Buffering..." or status_msg == "Buffering" or (elapsed_secs == 0 and not status_msg))
+
+        local is_live = data and data.is_live == true
+        if is_buffering and (not duration or duration == 0) and not is_live then
+            tgt.setTextColor(colors.yellow)
+            tgt.write("Loading...")
+        elseif is_live then
+            tgt.setTextColor(colors.red)
+            tgt.write("[LIVE STREAM] ")
+            tgt.setTextColor(colors.white)
+            tgt.write(format_duration(elapsed) or "0:00")
+        elseif duration and type(duration) == "number" and duration > 0 then
             local pct = math.min(1.0, math.max(0.0, elapsed / duration))
             local filled = math.floor(pct * bar_w)
             tgt.setTextColor(colors.lime)
@@ -204,10 +215,13 @@ function UI.render_audio_to_target(tgt, data, args, scroll_pos, status_msg, vers
             tgt.setTextColor(colors.white)
             tgt.write(format_duration(elapsed) .. " / " .. format_duration(duration))
         else
-            tgt.setTextColor(colors.cyan)
-            tgt.write("[" .. string.rep("=", bar_w) .. "] ")
-            tgt.setTextColor(colors.white)
-            tgt.write(format_duration(elapsed) or "0:00")
+            tgt.setTextColor(colors.yellow)
+            tgt.write("Loading...")
+        end
+
+        if is_buffering and not ((not duration or duration == 0) and not is_live) then
+            tgt.setTextColor(((scroll_pos or 0) % 2 == 0) and colors.yellow or colors.orange)
+            tgt.write(" (Buffering...)")
         end
 
         -- 5. Volume Bar Row (Row 7 - with [-] and [+] buttons)
@@ -233,8 +247,18 @@ function UI.render_audio_to_target(tgt, data, args, scroll_pos, status_msg, vers
         tgt.setCursorPos(2, 8)
         tgt.setTextColor(colors.lightGray)
         tgt.write("Status:   ")
-        tgt.setTextColor(colors.lime)
-        tgt.write(status_msg or "Playing Audio")
+
+        if is_buffering then
+            local anim_tick = (scroll_pos or 0) % 4
+            local buf_dots = string.rep(".", (anim_tick % 3) + 1)
+            local buf_text = "Buffering" .. buf_dots .. string.rep(" ", 3 - #buf_dots)
+            local buf_color = ((anim_tick % 2 == 0) and colors.yellow or colors.orange)
+            tgt.setTextColor(buf_color)
+            tgt.write(buf_text)
+        else
+            tgt.setTextColor(colors.lime)
+            tgt.write(status_msg or "Playing Audio")
+        end
 
         -- 7. Bottom Control Buttons Bar (Dynamically centered for width w)
         local btn_y = math.max(1, h - 1)
