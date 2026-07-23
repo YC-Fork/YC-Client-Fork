@@ -5,6 +5,32 @@ Handles responsive terminal and monitor UI rendering, scaling, and click resolut
 
 local UI = {}
 
+local CC_PALETTE = {
+    [0] = { 240 / 255, 240 / 255, 240 / 255 },
+    [1] = { 242 / 255, 178 / 255, 54 / 255 },
+    [2] = { 229 / 255, 127 / 255, 205 / 255 },
+    [3] = { 153 / 255, 178 / 255, 242 / 255 },
+    [4] = { 222 / 255, 222 / 255, 108 / 255 },
+    [5] = { 127 / 255, 204 / 255, 25 / 255 },
+    [6] = { 242 / 255, 178 / 255, 204 / 255 },
+    [7] = { 76 / 255, 76 / 255, 76 / 255 },
+    [8] = { 153 / 255, 153 / 255, 153 / 255 },
+    [9] = { 76 / 255, 153 / 255, 178 / 255 },
+    [10] = { 178 / 255, 102 / 255, 229 / 255 },
+    [11] = { 51 / 255, 102 / 255, 204 / 255 },
+    [12] = { 127 / 255, 102 / 255, 76 / 255 },
+    [13] = { 87 / 255, 169 / 255, 58 / 255 },
+    [14] = { 204 / 255, 76 / 255, 76 / 255 },
+    [15] = { 17 / 255, 17 / 255, 17 / 255 },
+}
+
+function UI.reset_palette(tgt)
+    if not tgt or not tgt.setPaletteColor then return end
+    for i = 0, 15 do
+        pcall(tgt.setPaletteColor, 2 ^ i, CC_PALETTE[i][1], CC_PALETTE[i][2], CC_PALETTE[i][3])
+    end
+end
+
 -- Helper to format seconds to M:SS or H:MM:SS
 local function format_duration(seconds)
     if not seconds or type(seconds) ~= "number" or seconds < 0 then return nil end
@@ -82,8 +108,9 @@ local function render_header_bar(tgt, version, client_id, nickname, server_url)
 end
 
 -- Renders the idle screen to a specific target
-function UI.render_idle_to_target(tgt, server_url, client_id, nickname, version, queue_via_dashboard)
+function UI.render_idle_to_target(tgt, server_url, client_id, nickname, version, queue_via_dashboard, enable_video)
     if not tgt then return end
+    UI.reset_palette(tgt)
     local w, h = tgt.getSize()
     tgt.setBackgroundColor(colors.black)
     tgt.clear()
@@ -109,15 +136,68 @@ function UI.render_idle_to_target(tgt, server_url, client_id, nickname, version,
     if #line2 > w - 3 then line2 = line2:sub(1, w - 3) end
     tgt.write(line2)
 
+    -- Input prompt on its OWN line (Row 8)
     tgt.setCursorPos(2, 8)
     tgt.setTextColor(colors.lime)
-    tgt.write("URL/Search > ")
+    tgt.write("> ")
     tgt.setTextColor(colors.white)
+
+end
+
+function UI.draw_video_choice_screen(targets, server_url, client_id, nickname, version)
+    for _, tgt in ipairs(targets or {}) do
+        if tgt and type(tgt.getSize) == "function" then
+            UI.reset_palette(tgt)
+            local w, h = tgt.getSize()
+            tgt.setBackgroundColor(colors.black)
+            tgt.clear()
+
+            render_header_bar(tgt, version, client_id, nickname, server_url)
+
+            tgt.setCursorPos(2, 4)
+            tgt.setTextColor(colors.yellow)
+            tgt.write("ENABLE VIDEO RENDERING?")
+
+            tgt.setCursorPos(2, 6)
+            tgt.setTextColor(colors.lightGray)
+            tgt.write("Click a button or press 1 / 2:")
+
+            -- Green YES (Video) Button
+            tgt.setCursorPos(2, 9)
+            tgt.setBackgroundColor(colors.lime)
+            tgt.setTextColor(colors.black)
+            tgt.write(" [1] YES (Video) ")
+
+            -- Red NO (Audio) Button
+            tgt.setCursorPos(21, 9)
+            tgt.setBackgroundColor(colors.red)
+            tgt.setTextColor(colors.white)
+            tgt.write(" [2] NO (Audio) ")
+
+            tgt.setBackgroundColor(colors.black)
+            tgt.setTextColor(colors.white)
+        end
+    end
+end
+
+-- Resolves click coordinates for the Video Choice Screen
+function UI.resolve_choice_click(click_x, click_y)
+    if not click_x or not click_y then return nil end
+    -- Check rows 7 to 12 around the button line
+    if click_y >= 7 and click_y <= 12 then
+        if click_x >= 1 and click_x <= 19 then
+            return "video"
+        elseif click_x >= 20 and click_x <= 45 then
+            return "audio"
+        end
+    end
+    return nil
 end
 
 -- Renders the active media audio player screen to a specific target
 function UI.render_audio_to_target(tgt, data, args, scroll_pos, status_msg, version, client_id, nickname, elapsed_secs)
     if not tgt then return end
+    UI.reset_palette(tgt)
     local w, h = tgt.getSize()
     local is_color = tgt.isColor()
 
@@ -308,7 +388,7 @@ function UI.draw_idle_screen(targets, server_url, client_id, nickname, version, 
     for _, tgt in ipairs(targets) do
         if tgt and type(tgt.getSize) == "function" then
             if tgt ~= term and tgt.setTextScale then
-                pcall(tgt.setTextScale, tgt, 0.5)
+                pcall(function() tgt.setTextScale(1.0) end)
             end
             UI.render_idle_to_target(tgt, server_url, client_id, nickname, version, queue_via_dashboard)
         end
@@ -317,12 +397,10 @@ end
 
 -- Draw audio player screen on all connected targets
 function UI.draw_audio_screen(targets, data, args, scroll_pos, status_msg, version, client_id, nickname, elapsed_secs)
-    if args and not args.no_video then return end -- Keep video 100% clean
-
     for _, tgt in ipairs(targets) do
         if tgt and type(tgt.getSize) == "function" then
             if tgt ~= term and tgt.setTextScale then
-                pcall(tgt.setTextScale, tgt, 0.5)
+                pcall(function() tgt.setTextScale(1.0) end)
             end
             UI.render_audio_to_target(tgt, data, args, scroll_pos, status_msg, version, client_id, nickname, elapsed_secs)
         end
@@ -401,7 +479,32 @@ function UI.resolve_click(event, p1, p2, p3, is_playing)
     return nil
 end
 
-function UI.draw_reconnect_screen(targets, server_url, client_id, nickname, version, mode, seconds_left)
+function UI.resolve_reconnect_click(click_x, click_y, w, h, cooldown_left)
+    if click_y ~= h then return nil end
+
+    local exit_btn = " Exit (Q) "
+    local rec_btn
+    if cooldown_left and cooldown_left > 0 then
+        rec_btn = " Reconnect (R) [" .. tostring(cooldown_left) .. "s] "
+    else
+        rec_btn = " Reconnect (R) "
+    end
+
+    local exit_x = math.max(1, w - #exit_btn + 1)
+    local rec_x = math.max(1, exit_x - #rec_btn - 1)
+
+    if click_x >= exit_x and click_x <= exit_x + #exit_btn - 1 then
+        return "exit"
+    elseif click_x >= rec_x and click_x <= rec_x + #rec_btn - 1 then
+        if not cooldown_left or cooldown_left <= 0 then
+            return "reconnect"
+        end
+    end
+
+    return nil
+end
+
+function UI.draw_reconnect_screen(targets, server_url, client_id, nickname, version, mode, seconds_left, error_msg, retry_count, max_retries, cooldown_left)
     for _, tgt in ipairs(targets or { term }) do
         local w, h = tgt.getSize()
         tgt.setBackgroundColor(colors.black)
@@ -461,21 +564,108 @@ function UI.draw_reconnect_screen(targets, server_url, client_id, nickname, vers
         tgt.setBackgroundColor(colors.gray)
         tgt.setCursorPos(1, 5)
         tgt.clearLine()
-        tgt.setTextColor(colors.yellow)
 
-        local sub_msg = "Retrying in " .. tostring(seconds_left or 5) .. "s..."
+        local sub_msg
+        if retry_count and max_retries and retry_count > max_retries then
+            tgt.setTextColor(colors.orange)
+            sub_msg = "[!] Max retries reached (" .. tostring(max_retries) .. "/" .. tostring(max_retries) .. "). Click Reconnect."
+        else
+            tgt.setTextColor(colors.yellow)
+            local current_try = tostring(retry_count or 1)
+            local max_try = tostring(max_retries or 5)
+            local sec = tostring(seconds_left or 60)
+            sub_msg = "Auto-retry (" .. current_try .. "/" .. max_try .. ") in " .. sec .. "s..."
+        end
+
         tgt.setCursorPos(math.max(2, math.floor((w - #sub_msg) / 2)), 5)
         tgt.write(sub_msg)
 
-        -- Bottom Exit Button (Row h - Right Aligned Red Button)
-        local btn_str = " Exit (Q) "
+        -- Row 6: Error reason (orange) if provided
+        tgt.setCursorPos(1, 6)
+        tgt.clearLine()
+        if error_msg and error_msg ~= "" then
+            tgt.setTextColor(colors.orange)
+            local short = tostring(error_msg):sub(1, w - 6)
+            tgt.setCursorPos(math.max(2, math.floor((w - #short - 5) / 2)), 6)
+            tgt.write("ERR: " .. short)
+        end
+
+        -- Bottom Buttons (Row h - Exit (Q) & Reconnect (R))
+        local exit_btn = " Exit (Q) "
+        local rec_btn
+        if cooldown_left and cooldown_left > 0 then
+            rec_btn = " Reconnect (R) [" .. tostring(cooldown_left) .. "s] "
+        else
+            rec_btn = " Reconnect (R) "
+        end
+
         tgt.setBackgroundColor(colors.black)
         tgt.setCursorPos(1, h)
         tgt.clearLine()
-        tgt.setCursorPos(math.max(1, w - #btn_str), h)
+
+        local exit_x = math.max(1, w - #exit_btn + 1)
+        local rec_x = math.max(1, exit_x - #rec_btn - 1)
+
+        -- Draw Reconnect Button
+        tgt.setCursorPos(rec_x, h)
+        if cooldown_left and cooldown_left > 0 then
+            tgt.setBackgroundColor(colors.gray)
+            tgt.setTextColor(colors.lightGray)
+        else
+            tgt.setBackgroundColor(colors.green)
+            tgt.setTextColor(colors.white)
+        end
+        tgt.write(rec_btn)
+
+        -- Draw Exit Button
+        tgt.setCursorPos(exit_x, h)
         tgt.setBackgroundColor(colors.red)
         tgt.setTextColor(colors.white)
-        tgt.write(btn_str)
+        tgt.write(exit_btn)
+    end
+end
+
+-- Renders a media error card overlay screen to targets
+function UI.draw_error_screen(targets, error_msg, version, client_id, nickname, server_url)
+    for _, tgt in ipairs(targets or {}) do
+        if tgt and type(tgt.getSize) == "function" then
+            local w, h = tgt.getSize()
+            if tgt.setCursorBlink then tgt.setCursorBlink(false) end
+            tgt.setBackgroundColor(colors.black)
+            tgt.clear()
+
+            render_header_bar(tgt, version, client_id, nickname, server_url)
+
+            -- Error Card Header (Row 4 - Red Background)
+            tgt.setBackgroundColor(colors.red)
+            tgt.setCursorPos(1, 4)
+            tgt.clearLine()
+            tgt.setTextColor(colors.white)
+            local title_msg = "[!] MEDIA ERROR"
+            tgt.setCursorPos(math.max(2, math.floor((w - #title_msg) / 2)), 4)
+            tgt.write(title_msg)
+
+            -- Error Card Body (Row 5 & 6 - Gray Background)
+            tgt.setBackgroundColor(colors.gray)
+            tgt.setCursorPos(1, 5)
+            tgt.clearLine()
+            tgt.setCursorPos(1, 6)
+            tgt.clearLine()
+
+            tgt.setTextColor(colors.yellow)
+            local display_msg = tostring(error_msg or "Unknown Error")
+            display_msg = display_msg:gsub("^ERROR:%s*", ""):gsub("^%[.-%]%s*", "")
+            if #display_msg > w - 4 then
+                display_msg = display_msg:sub(1, w - 4)
+            end
+            tgt.setCursorPos(math.max(2, math.floor((w - #display_msg) / 2)), 5)
+            tgt.write(display_msg)
+
+            tgt.setTextColor(colors.lightGray)
+            local sub_msg = "Returning to idle in 3s..."
+            tgt.setCursorPos(math.max(2, math.floor((w - #sub_msg) / 2)), 6)
+            tgt.write(sub_msg)
+        end
     end
 end
 

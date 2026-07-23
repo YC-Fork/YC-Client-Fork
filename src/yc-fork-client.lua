@@ -655,8 +655,13 @@ end
 
 local function get_render_targets()
     local targets = { term }
-    local mon = peripheral.find("monitor")
-    if mon then table.insert(targets, mon) end
+    if peripheral and peripheral.getNames then
+        for _, name in ipairs(peripheral.getNames()) do
+            if peripheral.getType(name) == "monitor" then
+                table.insert(targets, peripheral.wrap(name))
+            end
+        end
+    end
     return targets
 end
 
@@ -664,6 +669,11 @@ local function draw_idle_screen(server_url, client_id, nickname, queue_via_dashb
     local targets = get_render_targets()
     pcall(function() serverapi:send({ action = "idle" }) end)
     libs.ui.draw_idle_screen(targets, server_url, client_id, nickname, _VERSION, queue_via_dashboard)
+end
+
+local function draw_video_choice_screen(server_url, client_id, nickname)
+    local targets = get_render_targets()
+    libs.ui.draw_video_choice_screen(targets, server_url, client_id, nickname, _VERSION)
 end
 
 local function draw_audio_player_screen(data, args, scroll_pos, status_msg, elapsed_secs)
@@ -680,6 +690,25 @@ local restart_key = settings.get("youcube.keys.restart") or keys.r
 local back_key = settings.get("youcube.keys.back") or keys.a
 local stop_key = settings.get("youcube.keys.stop") or keys.q
 
+local function get_max_screen_size()
+    local max_w, max_h = term.getSize()
+    if peripheral and peripheral.getNames then
+        for _, name in ipairs(peripheral.getNames()) do
+            if peripheral.getType(name) == "monitor" then
+                local mon = peripheral.wrap(name)
+                if mon then
+                    pcall(function() mon.setTextScale(1.0) end)
+                    local mw, mh = mon.getSize()
+                    if (mw * mh) > (max_w * max_h) then
+                        max_w, max_h = mw, mh
+                    end
+                end
+            end
+        end
+    end
+    return max_w, max_h
+end
+
 local function play(url)
     -- Refresh audio devices at the start of each track
     audiodevices = get_audiodevices()
@@ -687,32 +716,25 @@ local function play(url)
     local exit_reason = "finished"
 
     -- Render initial loading state to keep UI active during buffering
-    if args.no_video then
-        draw_audio_player_screen({ title = "Loading track..." }, args)
-    end
+    draw_audio_player_screen({ title = "Loading track..." }, args)
+
     local function request_media_once()
         if not args.no_video then
-            serverapi:request_media(url, term.getSize())
+            local req_w, req_h = get_max_screen_size()
+            serverapi:request_media(url, req_w, req_h)
         else
             serverapi:request_media(url)
         end
 
         local data
-        local x, y = term.getCursorPos()
 
         while true do
             data = serverapi:receive()
             if data.action == "status" then
                 os.queueEvent("youcube:status", data)
-                term.setCursorPos(x, y)
-                term.clearLine()
-                term.write("Status: ")
-                write_colored(data.message, colors.green)
-                term.setTextColor(colors.white)
+                draw_audio_player_screen({ title = "Loading track..." }, args, nil, data.message)
             elseif data.action == "error" then
                 return nil, data
-            else
-                new_line()
             end
 
             if data.action == "media" then
@@ -728,37 +750,36 @@ local function play(url)
     end
     if err then
         printError("Server Error: " .. err.message)
+        local targets = get_render_targets()
+        local settings_data = load_settings()
+        local server_url = serverapi.server_url or args.server or "Server"
+        libs.ui.draw_error_screen(targets, err.message, _VERSION, serverapi.client_id, settings_data.nickname, server_url)
+        sleep(3)
         return nil, "error"
     end
 
-    if args.no_video then
-        draw_audio_player_screen(data, args)
-    else
-        buffer_x, buffer_y = term.getCursorPos()
-        term.write("Buffering Video: ")
-        term.setTextColor(colors.lightGray)
-        print(data.title)
-        term.setTextColor(colors.white)
+    if data and (data.has_video == false or data.is_video == false) then
+        args.no_video = true
     end
 
-    if not args.no_video then
-        -- wait so the user can see the video title info before video starts
-        sleep(1.5)
-    end
+    draw_audio_player_screen(data, args, 0, "Buffering media...")
 
+    local vid_w, vid_h = get_max_screen_size()
+    local area = vid_w * vid_h
+    local vid_buf_size = 60
+    if area > 4000 then
+        vid_buf_size = 15
+    elseif area > 2000 then
+        vid_buf_size = 25
+    end
     local video_buffer = libs.serverapi.Buffer.new(
-        libs.serverapi.VideoFiller.new(serverapi, data.id, term.getSize()),
-        60 -- Most videos run on 30 fps, so we store 2s of video.
+        libs.serverapi.VideoFiller.new(serverapi, data.id, vid_w, vid_h),
+        vid_buf_size
     )
 
     local audio_buffer = libs.serverapi.Buffer.new(
         libs.serverapi.AudioFiller.new(serverapi, data.id),
-        --[[
-            We want to buffer 1024 chunks.
-            One chunks is 16 bits.
-            The server (with default settings) sends 32 chunks at once.
-        ]]
-        32
+        256
     )
 
     if args.verbose then
@@ -781,21 +802,23 @@ local function play(url)
                 return
             end
 
-            if not args.no_audio then
-                audio_buffer:fill()
-            end
+            local did_work = false
 
-            if not args.no_video then
+            if not args.no_video and #video_buffer.buffer < video_buffer.size then
                 video_buffer:fill()
+                did_work = true
             end
 
-            if args.verbose then
-                term.setCursorPos(1, ({ term.getSize() })[2])
-                term.clearLine()
-                term.write("Audio_Buffer: " .. #audio_buffer.buffer)
+            if not args.no_audio and #audio_buffer.buffer < audio_buffer.size then
+                audio_buffer:fill()
+                did_work = true
             end
 
-            sleep(0.05)
+            if did_work then
+                sleep(0.02)
+            else
+                sleep(0.05)
+            end
         end
     end
 
@@ -822,7 +845,15 @@ local function play(url)
 
     local function _play_media()
         os.queueEvent("youcube:playing")
-        parallel.waitForAll(_play_video, _play_audio)
+        if args.no_video and args.no_audio then
+            return
+        elseif args.no_video then
+            _play_audio()
+        elseif args.no_audio then
+            _play_video()
+        else
+            parallel.waitForAny(_play_video, _play_audio)
+        end
     end
 
     local function _hotkey_handler()
@@ -1059,15 +1090,21 @@ local function play_playlist(playlist)
     end
 end
 
-local function draw_reconnect_screen(server_url, client_id, nickname, mode, seconds_left)
+local function draw_reconnect_screen(server_url, client_id, nickname, mode, seconds_left, error_msg, retry_count, max_retries, cooldown_left)
     local targets = get_render_targets()
-    libs.ui.draw_reconnect_screen(targets, server_url, client_id, nickname, _VERSION, mode, seconds_left)
+    libs.ui.draw_reconnect_screen(targets, server_url, client_id, nickname, _VERSION, mode, seconds_left, error_msg, retry_count, max_retries, cooldown_left)
 end
 
 local function ensure_connected(force_mode)
     local initial_mode = force_mode or "unreachable"
+    local last_error = nil
+    local retry_count = 0
+    local max_auto_retries = 5
+    local last_manual_reconnect_time = 0
+    local manual_reconnect_cooldown = 120 -- 2 minutes in seconds
+
     while true do
-        local ok = pcall(function()
+        local ok, err = pcall(function()
             if serverapi.websocket and type(serverapi.websocket.send) == "function" then
                 return true
             end
@@ -1078,31 +1115,85 @@ local function ensure_connected(force_mode)
             return true
         end
 
+        -- Capture the error so we can show it on screen
+        if not ok and err then
+            last_error = tostring(err)
+        end
+
+        retry_count = retry_count + 1
+
         local settings_data = load_settings()
         local nickname = settings_data.nickname
         local server_url = serverapi.server_url or args.server or "Server"
         local client_id = serverapi.client_id or "unknown"
 
-        for cd = 5, 1, -1 do
-            draw_reconnect_screen(server_url, client_id, nickname, initial_mode, cd)
-            
+        local auto_retry_active = (retry_count <= max_auto_retries)
+        local countdown = auto_retry_active and 60 or nil
+
+        local function get_cooldown_left()
+            if last_manual_reconnect_time == 0 then return 0 end
+            local now = os.clock()
+            local elapsed = now - last_manual_reconnect_time
+            if elapsed < manual_reconnect_cooldown then
+                return math.ceil(manual_reconnect_cooldown - elapsed)
+            end
+            return 0
+        end
+
+        local action_taken = nil
+
+        while true do
+            local cd_left = get_cooldown_left()
+            draw_reconnect_screen(server_url, client_id, nickname, initial_mode, countdown, last_error, retry_count, max_auto_retries, cd_left)
+
             local timer_id = os.startTimer(1)
-            while true do
+            local loop_done = false
+
+            while not loop_done do
                 local event, p1, p2, p3 = os.pullEvent()
                 if event == "timer" and p1 == timer_id then
+                    if countdown then
+                        countdown = countdown - 1
+                        if countdown <= 0 then
+                            action_taken = "retry"
+                            loop_done = true
+                            break
+                        end
+                    end
+                    loop_done = true
                     break
                 elseif event == "key" then
                     if p1 == keys.q or p1 == keys.x then
                         error("Terminated")
+                    elseif p1 == keys.r then
+                        if get_cooldown_left() <= 0 then
+                            last_manual_reconnect_time = os.clock()
+                            action_taken = "retry"
+                            loop_done = true
+                            break
+                        end
                     end
                 elseif event == "mouse_click" or event == "monitor_touch" then
                     local click_x, click_y = p2, p3
                     local targets = get_render_targets()
                     local w, h = targets[1].getSize()
-                    if click_x >= w - 11 and click_y == h then
+                    local cd_val = get_cooldown_left()
+                    local btn_action = libs.ui.resolve_reconnect_click(click_x, click_y, w, h, cd_val)
+                    if btn_action == "exit" then
                         error("Terminated")
+                    elseif btn_action == "reconnect" then
+                        if cd_val <= 0 then
+                            last_manual_reconnect_time = os.clock()
+                            action_taken = "retry"
+                            loop_done = true
+                            break
+                        end
                     end
                 end
+            end
+
+            if action_taken == "retry" then
+                break
             end
         end
     end
@@ -1112,6 +1203,7 @@ local function main()
     ensure_connected("unreachable")
     pcall(update_checker)
 
+    local cli_no_video = (args.no_video == true)
     local default_no_video = args.no_video
     local default_no_audio = args.no_audio
 
@@ -1121,9 +1213,7 @@ local function main()
             if not args.URL or args.URL == "" then
                 args.no_video = default_no_video
                 args.no_audio = default_no_audio
-                if not args.no_video then
-                    libs.serverapi.reset_term()
-                end
+                
                 local queued = serverapi:get_queued_media()
                 if queued and queued.url then
                     args.URL = queued.url
@@ -1135,7 +1225,12 @@ local function main()
                     local nickname = settings_data.nickname
                     local server_url = serverapi.server_url or (serverapi.websocket and serverapi.websocket.url) or args.server or "Server"
                     local client_id = serverapi.client_id or "unknown"
+
                     draw_idle_screen(server_url, client_id, nickname, settings_data.queue_via_dashboard)
+                    term.setCursorPos(4, 8)
+                    term.setTextColor(colors.white)
+
+                    local is_from_dashboard = false
 
                     parallel.waitForAny(
                         function()
@@ -1143,18 +1238,87 @@ local function main()
                         end,
                         function()
                             while true do
-                                sleep(2)
+                                sleep(1)
                                 local q = serverapi:get_queued_media()
                                 if q and q.url then
                                     args.URL = q.url
                                     if q.no_video ~= nil then
                                         args.no_video = q.no_video
                                     end
+                                    is_from_dashboard = true
                                     break
                                 end
                             end
                         end
                     )
+
+                    -- Ask for video mode choice ONLY if typed manually in-game and CLI flag wasn't set
+                    if not is_from_dashboard and args.URL and not args.URL:match("^%s*$") and not cli_no_video then
+                        -- Drain any leftover events from read()
+                        while os.pollEvent and os.pollEvent() do end
+
+                        draw_video_choice_screen(server_url, client_id, nickname)
+                        local selected_no_video = true
+                        local choice_done = false
+
+                        parallel.waitForAny(
+                            function()
+                                while not choice_done do
+                                    local event, p1, p2, p3 = os.pullEvent()
+                                    if event == "mouse_click" or event == "monitor_touch" then
+                                        local click_x, click_y = p2, p3
+                                        local choice = libs.ui.resolve_choice_click(click_x, click_y)
+                                        if choice == "video" then
+                                            selected_no_video = false
+                                            choice_done = true
+                                            break
+                                        elseif choice == "audio" then
+                                            selected_no_video = true
+                                            choice_done = true
+                                            break
+                                        end
+                                    elseif event == "char" then
+                                        local ch = tostring(p1):lower()
+                                        if ch == "1" or ch == "y" or ch == "v" then
+                                            selected_no_video = false
+                                            choice_done = true
+                                            break
+                                        elseif ch == "2" or ch == "n" or ch == "a" then
+                                            selected_no_video = true
+                                            choice_done = true
+                                            break
+                                        end
+                                    elseif event == "key" then
+                                        if p1 == keys.one or p1 == keys.numPad1 or p1 == keys.y or p1 == keys.v then
+                                            selected_no_video = false
+                                            choice_done = true
+                                            break
+                                        elseif p1 == keys.two or p1 == keys.numPad2 or p1 == keys.n or p1 == keys.a then
+                                            selected_no_video = true
+                                            choice_done = true
+                                            break
+                                        end
+                                    end
+                                end
+                            end,
+                            function()
+                                while not choice_done do
+                                    sleep(1)
+                                    local q = serverapi:get_queued_media()
+                                    if q and q.url then
+                                        args.URL = q.url
+                                        if q.no_video ~= nil then
+                                            selected_no_video = q.no_video
+                                        end
+                                        choice_done = true
+                                        break
+                                    end
+                                end
+                            end
+                        )
+                        args.no_video = selected_no_video
+                        draw_audio_player_screen({ title = "Loading track..." }, args)
+                    end
                 end
                 term.setTextColor(colors.white)
                 if not args.URL or args.URL:match("^%s*$") then

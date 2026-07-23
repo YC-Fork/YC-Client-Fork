@@ -192,11 +192,9 @@ function API:receive(filter)
     end
 
     if filter then
-        --if type(filter) == "table" then
-        --    if not filter[data.action] then
-        --        return self:receive(filter)
-        --    end
-        --else
+        if data.action == "error" then
+            return data
+        end
         if data.action ~= filter then
             return self:receive(filter)
         end
@@ -547,10 +545,18 @@ function VideoFiller.new(serverapi, id, width, height)
 
     function self:next()
         local response = self.serverapi:get_vid(self.tracker, self.id, self.width, self.height)
-        for i = 1, #response.lines do
-            self.tracker = self.tracker + #response.lines[i] + 1
+        if not response or not response.lines or response.action == "error" then
+            return {}
         end
-        return response.lines
+        local valid_lines = {}
+        for i = 1, #response.lines do
+            local line = response.lines[i]
+            if line and line ~= "" then
+                valid_lines[#valid_lines + 1] = line
+                self.tracker = self.tracker + #line + 1
+            end
+        end
+        return valid_lines
     end
 
     return self
@@ -585,10 +591,15 @@ function Buffer.new(filler, size)
         if #self.buffer < self.size then
             local next = filler:next()
             if type(next) == "table" then
-                for i = 1, #next do
-                    self.buffer[#self.buffer + 1] = next[i]
+                if #next == 0 then
+                    return false
                 end
-            else
+                for i = 1, #next do
+                    if next[i] and next[i] ~= "" then
+                        self.buffer[#self.buffer + 1] = next[i]
+                    end
+                end
+            elseif next and next ~= "" then
                 self.buffer[#self.buffer + 1] = next
             end
             return true
@@ -599,21 +610,56 @@ function Buffer.new(filler, size)
     return self
 end
 
-local currnt_palette = {}
-
-for i = 0, 15 do
-    local r, g, b = term.getPaletteColour(2 ^ i)
-    currnt_palette[i] = { r, g, b }
+local function get_video_targets()
+    local targets = { term }
+    if peripheral and peripheral.getNames then
+        for _, name in ipairs(peripheral.getNames()) do
+            if peripheral.getType(name) == "monitor" then
+                local mon = peripheral.wrap(name)
+                if mon then
+                    table.insert(targets, mon)
+                end
+            end
+        end
+    end
+    return targets
 end
 
+local CC_STANDARD_PALETTE = {
+    [0] = { 240 / 255, 240 / 255, 240 / 255 },
+    [1] = { 242 / 255, 178 / 255, 54 / 255 },
+    [2] = { 229 / 255, 127 / 255, 205 / 255 },
+    [3] = { 153 / 255, 178 / 255, 242 / 255 },
+    [4] = { 222 / 255, 222 / 255, 108 / 255 },
+    [5] = { 127 / 255, 204 / 255, 25 / 255 },
+    [6] = { 242 / 255, 178 / 255, 204 / 255 },
+    [7] = { 76 / 255, 76 / 255, 76 / 255 },
+    [8] = { 153 / 255, 153 / 255, 153 / 255 },
+    [9] = { 76 / 255, 153 / 255, 178 / 255 },
+    [10] = { 178 / 255, 102 / 255, 229 / 255 },
+    [11] = { 51 / 255, 102 / 255, 204 / 255 },
+    [12] = { 127 / 255, 102 / 255, 76 / 255 },
+    [13] = { 87 / 255, 169 / 255, 58 / 255 },
+    [14] = { 204 / 255, 76 / 255, 76 / 255 },
+    [15] = { 17 / 255, 17 / 255, 17 / 255 },
+}
+
 local function reset_term()
-    for i = 0, 15 do
-        term.setPaletteColor(2 ^ i, currnt_palette[i][1], currnt_palette[i][2], currnt_palette[i][3])
+    local targets = get_video_targets()
+    for _, tgt in ipairs(targets) do
+        for i = 0, 15 do
+            pcall(tgt.setPaletteColor, 2 ^ i, CC_STANDARD_PALETTE[i][1], CC_STANDARD_PALETTE[i][2], CC_STANDARD_PALETTE[i][3])
+        end
+        tgt.setBackgroundColor(colors.black)
+        tgt.setTextColor(colors.white)
+        tgt.clear()
+        tgt.setCursorPos(1, 1)
     end
-    term.setBackgroundColor(colors.black)
-    term.setTextColor(colors.white)
-    term.clear()
-    term.setCursorPos(1, 1)
+end
+
+local HEX_LOOKUP = {}
+for i = 0, 15 do
+    HEX_LOOKUP[i] = string.format("%x", i)
 end
 
 --[[- Create's a new Buffer instance.
@@ -626,6 +672,7 @@ local function play_vid(buffer, force_fps, string_unpack)
     if not string_unpack then
         string_unpack = string.unpack
     end
+    local targets = get_video_targets()
     local Fwidth, Fheight = term.getSize()
     local tracker = 0
 
@@ -638,15 +685,19 @@ local function play_vid(buffer, force_fps, string_unpack)
         fps = force_fps
     end
 
-    -- Adjust buffer size
-    buffer.size = math.ceil(fps) * 2
+    -- Keep custom dynamic buffer size if already configured smaller to avoid memory choke
+    if buffer.size > 20 then
+        buffer.size = math.ceil(fps) * 2
+    end
 
     local first, second = buffer:next(), buffer:next()
 
     if second == "" or second == nil then
         fps = 0
     end
-    term.clear()
+    for _, tgt in ipairs(targets) do
+        tgt.clear()
+    end
 
     local start = os.epoch("utc")
     local frame_count = 0
@@ -682,33 +733,41 @@ local function play_vid(buffer, force_fps, string_unpack)
         local c, n, pos = string_unpack("c1B", data, 17)
         local text = {}
         for y = 1, height do
-            text[y] = ""
+            local row_chars = {}
             for x = 1, width do
-                text[y] = text[y] .. c
+                row_chars[x] = c
                 n = n - 1
                 if n == 0 then
                     c, n, pos = string_unpack("c1B", data, pos)
                 end
             end
+            text[y] = table.concat(row_chars)
         end
         c = c:byte()
         for y = 1, height do
-            local fg, bg = "", ""
+            local fg_chars, bg_chars = {}, {}
             for x = 1, width do
-                fg, bg = fg .. ("%x"):format(bit32.band(c, 0x0F)), bg .. ("%x"):format(bit32.rshift(c, 4))
+                fg_chars[x] = HEX_LOOKUP[bit32.band(c, 0x0F)]
+                bg_chars[x] = HEX_LOOKUP[bit32.rshift(c, 4)]
                 n = n - 1
                 if n == 0 then
                     c, n, pos = string_unpack("BB", data, pos)
                 end
             end
-            term.setCursorPos(1, y)
-            term.blit(text[y], fg, bg)
+            local fg = table.concat(fg_chars)
+            local bg = table.concat(bg_chars)
+            for _, tgt in ipairs(targets) do
+                tgt.setCursorPos(1, y)
+                tgt.blit(text[y], fg, bg)
+            end
         end
         pos = pos - 2
         local r, g, b
         for i = 0, 15 do
             r, g, b, pos = string_unpack("BBB", data, pos)
-            term.setPaletteColor(2 ^ i, r / 255, g / 255, b / 255)
+            for _, tgt in ipairs(targets) do
+                tgt.setPaletteColor(2 ^ i, r / 255, g / 255, b / 255)
+            end
         end
         if fps == 0 then
             read()
