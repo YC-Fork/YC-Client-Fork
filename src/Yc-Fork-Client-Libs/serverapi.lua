@@ -35,7 +35,7 @@ end
 function API.new(websocket)
     return setmetatable({
         websocket = websocket,
-        client_version = "2.01.023",
+        client_version = "2.01.024",
     }, { __index = API })
 end
 

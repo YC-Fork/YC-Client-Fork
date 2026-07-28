@@ -2,7 +2,7 @@
 YC-Client-Fork
 ]]
 
-local _VERSION = "2.01.023"
+local _VERSION = "2.01.024"
 
 local function is_lib(libs, lib)
     for i = 1, #libs do
