@@ -3,8 +3,7 @@ _ _  _ ____ ___ ____ _    _    ____ ____
 | |\ | [__   |  |__| |    |    |___ |__/
 | | \| ___]  |  |  | |___ |___ |___ |  \
 
-Github Repository: https://github.com/CC-YouCube
-Homepage: https://youcube.madefor.cc/
+Github Repository: https://github.com/YC-Fork/YC-Client-Fork
 License: GPL-3.0
 ]]
 -- OpenInstaller v1.0.1 (based on wget)

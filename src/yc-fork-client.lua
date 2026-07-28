@@ -2,7 +2,7 @@
 YC-Client-Fork
 ]]
 
-local _VERSION = "2.00.001"
+local _VERSION = "2.01.022"
 
 local function is_lib(libs, lib)
     for i = 1, #libs do
@@ -644,11 +644,31 @@ local function load_settings()
             if type(parsed) == "table" then
                 if parsed.nickname ~= nil then settings_data.nickname = tostring(parsed.nickname) end
                 if parsed.queue_via_dashboard ~= nil then settings_data.queue_via_dashboard = (parsed.queue_via_dashboard == true) end
+                if parsed.redstone_side ~= nil then settings_data.redstone_side = tostring(parsed.redstone_side) end
             end
         end
     end
 
     return settings_data
+end
+
+local function set_redstone_state(active)
+    local rs_api = rs or redstone
+    if not rs_api then return end
+
+    local settings_data = load_settings()
+    local side = (args and args.redstone_side) or settings_data.redstone_side or "all"
+    side = tostring(side):lower()
+
+    local all_sides = { "top", "bottom", "left", "right", "front", "back" }
+
+    if side == "all" then
+        for _, s in ipairs(all_sides) do
+            pcall(function() rs_api.setOutput(s, active == true) end)
+        end
+    else
+        pcall(function() rs_api.setOutput(side, active == true) end)
+    end
 end
 
 -- LevelOS-inspired UI Drawing Helpers ─────────────────────────────────────────
@@ -666,6 +686,7 @@ local function get_render_targets()
 end
 
 local function draw_idle_screen(server_url, client_id, nickname, queue_via_dashboard)
+    set_redstone_state(false)
     local targets = get_render_targets()
     pcall(function() serverapi:send({ action = "idle" }) end)
     libs.ui.draw_idle_screen(targets, server_url, client_id, nickname, _VERSION, queue_via_dashboard)
@@ -794,6 +815,7 @@ local function play(url)
         start_time = os.clock()
         playing_started = true
         pcall(function() serverapi:send({ action = "seek_notify", timestamp = 0 }) end)
+        set_redstone_state(true)
     end
 
     local function fill_buffers()
@@ -1053,6 +1075,7 @@ local function play(url)
         end
     end
 
+    set_redstone_state(false)
     return data.playlist_videos, exit_reason
 end
 
@@ -1095,29 +1118,95 @@ local function draw_reconnect_screen(server_url, client_id, nickname, mode, seco
     libs.ui.draw_reconnect_screen(targets, server_url, client_id, nickname, _VERSION, mode, seconds_left, error_msg, retry_count, max_retries, cooldown_left)
 end
 
-local function ensure_connected(force_mode)
+local function ensure_connected(force_mode, kick_reason)
     local initial_mode = force_mode or "unreachable"
-    local last_error = nil
+    local last_error = kick_reason or nil
     local retry_count = 0
     local max_auto_retries = 5
     local last_manual_reconnect_time = 0
     local manual_reconnect_cooldown = 120 -- 2 minutes in seconds
 
-    while true do
-        local ok, err = pcall(function()
-            if serverapi.websocket and type(serverapi.websocket.send) == "function" then
-                return true
+    if initial_mode == "kicked" then
+        -- When kicked, show a permanent kick screen.
+        -- The user can only exit the client from here.
+        -- Pressing "Reconnect" will call detect_bestest_server from within
+        -- ensure_connected so we never fall back into main()'s outer loop.
+        if serverapi then
+            if serverapi.websocket then
+                pcall(function() serverapi.websocket.close() end)
+                serverapi.websocket = nil
             end
-            serverapi:detect_bestest_server(args.server, args.verbose, args.volume)
-        end)
-
-        if ok and serverapi.websocket then
-            return true
+            serverapi.client_id = nil
         end
 
-        -- Capture the error so we can show it on screen
-        if not ok and err then
-            last_error = tostring(err)
+        local settings_data = load_settings()
+        local nickname = settings_data.nickname
+        local server_url = serverapi.server_url or args.server or "Server"
+        local client_id = "unknown"
+
+        while true do
+            draw_reconnect_screen(server_url, client_id, nickname, "kicked", nil, last_error, 0, 0, 0)
+            local timer_id = os.startTimer(1)
+            local loop_done = false
+
+            while not loop_done do
+                local event, p1, p2, p3 = os.pullEvent()
+                if event == "timer" and p1 == timer_id then
+                    loop_done = true
+                elseif event == "key" then
+                    if p1 == keys.q or p1 == keys.x then
+                        error("Terminated")
+                    elseif p1 == keys.r then
+                        -- Reconnect from kick screen: do a full reconnect inside ensure_connected
+                        local ok, err = pcall(function()
+                            serverapi:detect_bestest_server(args.server, args.verbose, args.volume)
+                        end)
+                        if ok and serverapi.websocket then
+                            return true
+                        else
+                            last_error = tostring(err)
+                        end
+                        loop_done = true
+                    end
+                elseif event == "mouse_click" or event == "monitor_touch" then
+                    local click_x, click_y = p2, p3
+                    local targets = get_render_targets()
+                    local w, h = targets[1].getSize()
+                    local btn_action = libs.ui.resolve_reconnect_click(click_x, click_y, w, h, 0)
+                    if btn_action == "exit" then
+                        error("Terminated")
+                    elseif btn_action == "reconnect" then
+                        local ok, err = pcall(function()
+                            serverapi:detect_bestest_server(args.server, args.verbose, args.volume)
+                        end)
+                        if ok and serverapi.websocket then
+                            return true
+                        else
+                            last_error = tostring(err)
+                        end
+                        loop_done = true
+                    end
+                end
+            end
+        end
+    end
+
+    while true do
+        if initial_mode ~= "kicked" then
+            local ok, err = pcall(function()
+                if serverapi.websocket and type(serverapi.websocket.send) == "function" then
+                    return true
+                end
+                serverapi:detect_bestest_server(args.server, args.verbose, args.volume)
+            end)
+
+            if ok and serverapi.websocket then
+                return true
+            end
+
+            if not ok and err then
+                last_error = tostring(err)
+            end
         end
 
         retry_count = retry_count + 1
@@ -1168,6 +1257,7 @@ local function ensure_connected(force_mode)
                     elseif p1 == keys.r then
                         if get_cooldown_left() <= 0 then
                             last_manual_reconnect_time = os.clock()
+                            initial_mode = "unreachable"
                             action_taken = "retry"
                             loop_done = true
                             break
@@ -1184,6 +1274,7 @@ local function ensure_connected(force_mode)
                     elseif btn_action == "reconnect" then
                         if cd_val <= 0 then
                             last_manual_reconnect_time = os.clock()
+                            initial_mode = "unreachable"
                             action_taken = "retry"
                             loop_done = true
                             break
@@ -1230,6 +1321,7 @@ local function main()
                     term.setCursorPos(4, 8)
                     term.setTextColor(colors.white)
 
+                    local kick_reason = nil
                     local is_from_dashboard = false
 
                     parallel.waitForAny(
@@ -1237,20 +1329,62 @@ local function main()
                             args.URL = read()
                         end,
                         function()
+                            -- Watch websocket events directly so we catch kick messages
+                            -- the instant they arrive (not after a 1-second sleep gap).
+                            -- Use server_url (always set after connect) not websocket.url
+                            -- which is nil on CC WebSocket handles.
+                            local ws_url = serverapi.server_url or args.server or ""
+                            local poll_timer = os.startTimer(0) -- send first poll immediately
+
                             while true do
-                                sleep(1)
-                                local q = serverapi:get_queued_media()
-                                if q and q.url then
-                                    args.URL = q.url
-                                    if q.no_video ~= nil then
-                                        args.no_video = q.no_video
+                                local event, p1, p2 = os.pullEvent()
+
+                                if event == "timer" and p1 == poll_timer then
+                                    -- Send get_queued_media request, then wait for the response
+                                    -- via websocket_message below. Start next poll timer after 2s.
+                                    local ok = pcall(function()
+                                        serverapi:send({ action = "get_queued_media" })
+                                    end)
+                                    if not ok then
+                                        -- WS closed already - raise so the outer pcall handles it
+                                        error("websocket_closed")
                                     end
-                                    is_from_dashboard = true
-                                    break
+                                    poll_timer = os.startTimer(2)
+
+                                elseif event == "websocket_message" and (ws_url == "" or p1 == ws_url) then
+                                    -- Parse every incoming message directly so kicks arrive
+                                    -- immediately, without waiting for the next poll cycle.
+                                    local ok, data = pcall(textutils.unserialiseJSON, p2 or "")
+                                    if ok and type(data) == "table" then
+                                        if data.action == "kick" then
+                                            kick_reason = "kicked: " .. (data.reason or "Kicked by administrator")
+                                            return
+                                        elseif data.action == "play" then
+                                            if data.url then
+                                                args.URL = data.url
+                                                if data.no_video ~= nil then
+                                                    args.no_video = data.no_video
+                                                end
+                                                is_from_dashboard = true
+                                                return
+                                            end
+                                            -- play with no url = nothing queued yet, just wait
+                                        elseif data.action == "set_volume" and data.volume ~= nil then
+                                            os.queueEvent("youcube:set_volume", data.volume)
+                                        end
+                                    end
+
+                                elseif event == "websocket_close" and (ws_url == "" or p1 == ws_url) then
+                                    -- Connection dropped while idle
+                                    error("websocket_closed")
                                 end
                             end
                         end
                     )
+
+                    if kick_reason then
+                        error(kick_reason)
+                    end
 
                     -- Ask for video mode choice ONLY if typed manually in-game and CLI flag wasn't set
                     if not is_from_dashboard and args.URL and not args.URL:match("^%s*$") and not cli_no_video then
@@ -1361,9 +1495,20 @@ local function main()
             if tostring(run_err):find("Terminated") then
                 error("Terminated")
             end
+            local err_str = tostring(run_err)
+            local mode = "lost"
+            local reason = nil
+            if err_str:lower():find("kick") then
+                mode = "kicked"
+                -- Extract just the reason part after "kicked: "
+                reason = err_str:match("kicked: (.+)") or err_str:match("kick[^:]*: (.+)") or err_str
+                -- Strip Lua stack location prefix if present
+                reason = reason:gsub("^.+:%d+: ", ""):gsub("^stack traceback.+", "")
+                reason = reason:match("^%s*(.-)%s*$") -- trim
+            end
             serverapi.websocket = nil
             args.URL = nil
-            ensure_connected("lost")
+            ensure_connected(mode, reason)
         end
     end
 

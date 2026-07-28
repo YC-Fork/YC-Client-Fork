@@ -78,7 +78,7 @@
   ;; HTML-specific properties
   (site
     ;; A title to display for the site
-    (title "YouCube")
+    (title "YC-Fork")
     
     ;; The path to a logo to display for this site.
     (logo :none)

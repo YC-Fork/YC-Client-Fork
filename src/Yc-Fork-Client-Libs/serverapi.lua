@@ -1,14 +1,12 @@
---[[- Lua library for accessing [YC-Fork's API](https://commandcracker.github.io/YC-Forke/)
+--[[- Lua library for accessing [YC-Fork's API](https://github.com/YC-Fork/YC-Server-Fork)
     @module serverapi
 ]]
 
---[[ serverapi.lua
-_   _ ____ _  _ ____ _  _ ___  ____ ____ ___  _
- \_/  |  | |  | |    |  | |__] |___ |__| |__] |
-  |   |__| |__| |___ |__| |__] |___ |  | |    |
+--[[
+    serverapi.lua - YC-Fork Server API Client Library
 ]]
 
---[[- "wrapper" for accessing [YC-Fork's API](https://commandcracker.github.io/YC-Forke/)
+--[[- "wrapper" for accessing [YC-Fork's API](https://github.com/YC-Fork/YC-Server-Fork)
     @type API
     @usage Example:
 
@@ -22,26 +20,26 @@ local API = {}
 
 local function is_compatible_version(v1, v2)
     if not v1 or not v2 then return false end
-    local m1, min1 = tostring(v1):match("^([^%.]+)%.([^%.]+)")
-    local m2, min2 = tostring(v2):match("^([^%.]+)%.([^%.]+)")
+    if tostring(v1) == tostring(v2) then return true end
+    local m1, min1 = tostring(v1):match("^(%d+)%.(%d+)")
+    local m2, min2 = tostring(v2):match("^(%d+)%.(%d+)")
     if m1 and m2 and min1 and min2 then
         return tonumber(m1) == tonumber(m2) and tonumber(min1) == tonumber(min2)
     end
-    return v1 == v2
+    return false
 end
 
 --- Create's a new API instance.
 -- @param websocket [Websocket](https://tweaked.cc/module/http.html#ty:Websocket) The websocket.
--- @treturn API instance
+-- @return API instance
 function API.new(websocket)
     return setmetatable({
         websocket = websocket,
-        client_version = "2.00.001",
+        client_version = "2.01.022",
     }, { __index = API })
 end
 
--- Look at the [Documentation](https://commandcracker.github.io/YC-Forke/) for moor information
--- Contact the server owner on Discord, when the server is down
+-- Server for YC-Fork. If there are any issues please make a ticket at https://github.com/YC-Fork/YC-Server-Fork
 local servers = {
     "wss://ycfork.beltboys.nl"
 }
@@ -175,6 +173,11 @@ function API:receive(filter)
     -- Extract volume from any incoming packet payload
     if data.volume ~= nil then
         os.queueEvent("youcube:set_volume", data.volume)
+    end
+
+    if data.action == "kick" then
+        local reason = data.reason or "Kicked by administrator"
+        error("kicked: " .. reason)
     end
 
     if data.action == "stop" or data.action == "skip" or data.action == "restart" then

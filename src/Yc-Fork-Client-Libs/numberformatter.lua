@@ -2,13 +2,8 @@
     @module numberformatter
 ]]
 
---[[ numberformatter.lua
-_  _ _  _ _  _ ___  ____ ____
-|\ | |  | |\/| |__] |___ |__/
-| \| |__| |  | |__] |___ |  \
-____ ____ ____ _  _ ____ ___ ___ ____ ____
-|___ |  | |__/ |\/| |__|  |   |  |___ |__/
-|    |__| |  \ |  | |  |  |   |  |___ |  \
+--[[
+    numberformatter.lua - Number formatting library for YC-Client-Fork
 ]]
 
 local NumberFormatter = {
@@ -17,7 +12,7 @@ local NumberFormatter = {
     --- "Metadata" - Description
     _DESCRIPTION = "Library for formatting numbers",
     --- "Metadata" - Homepage / Url
-    _URL         = "https://github.com/Commandcracker/YouCube",
+    _URL         = "https://github.com/YC-Fork/YC-Client-Fork",
     --- "Metadata" - License
     _LICENSE     = "GPL-3.0"
 }

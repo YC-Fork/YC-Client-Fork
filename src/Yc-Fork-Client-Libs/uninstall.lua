@@ -3,31 +3,15 @@
 ]]
 
 local function question(message)
-    -- Save original terminal state
-    local old_blink_state = term.getCursorBlink()
-    local old_text_color = term.getTextColor()
-    local old_bg_color = term.getBackgroundColor()
-
-    -- Ensure terminal is in a usable state for input
     term.setCursorBlink(true)
+    term.setTextColor(colors.yellow)
+    write(message .. " [y/N]: ")
     term.setTextColor(colors.white)
-    term.setBackgroundColor(colors.black)
-
-    term.write(message .. " [y/n] ")
-    local input = read() -- Use the standard read in a safe context
-
-    -- Restore original terminal state
-    term.setCursorBlink(old_blink_state)
-    term.setTextColor(old_text_color)
-    term.setBackgroundColor(old_bg_color)
-    print() -- Move to the next line for clean output
-
-    -- Handle cases where the user terminates (Ctrl+T) during input
+    local input = read()
     if not input then
         return false
     end
-
-    local answer = input:lower()
+    local answer = input:lower():gsub("%s+", "")
     return answer == "y" or answer == "yes"
 end
 
@@ -45,7 +29,12 @@ local files_to_delete = {
     "./Yc-Fork-Client-Libs/semver.lua",
     "./Yc-Fork-Client-Libs/argparse.lua",
     "./Yc-Fork-Client-Libs/string_pack.lua",
+    "./Yc-Fork-Client-Libs/ui.lua",
     "./Yc-Fork-Client-Libs/uninstall.lua",
+    "./ycfork_settings.txt",
+    "/ycfork_settings.txt",
+    "./ycfork_history.txt",
+    "/ycfork_history.txt"
 }
 
 local dirs_to_delete = {
@@ -56,7 +45,9 @@ for _, file_path in ipairs(files_to_delete) do
     local resolved_path = shell.resolve(file_path)
     if fs.exists(resolved_path) then
         fs.delete(resolved_path)
+        term.setTextColor(colors.lightGray)
         print("Deleted " .. resolved_path)
+        term.setTextColor(colors.white)
     end
 end
 
@@ -64,8 +55,12 @@ for _, dir_path in ipairs(dirs_to_delete) do
     local resolved_path = shell.resolve(dir_path)
     if fs.exists(resolved_path) and #fs.list(resolved_path) == 0 then
         fs.delete(resolved_path)
+        term.setTextColor(colors.lightGray)
         print("Deleted directory " .. resolved_path)
+        term.setTextColor(colors.white)
     end
 end
 
-print("YC-Client-Fork has been uninstalled.")
+term.setTextColor(colors.lime)
+print("YC-Client-Fork has been fully uninstalled.")
+term.setTextColor(colors.white)

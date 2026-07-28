@@ -1,5 +1,5 @@
 --[[
-YC-Fork UI Library v2.00.001
+YC-Fork UI Library v2.01.002
 Handles responsive terminal and monitor UI rendering, scaling, and click resolution.
 ]]
 
@@ -555,6 +555,8 @@ function UI.draw_reconnect_screen(targets, server_url, client_id, nickname, vers
         local title_msg = "[!] SERVER UNREACHABLE"
         if mode == "lost" then
             title_msg = "[!] CONNECTION TO SERVER LOST"
+        elseif mode == "kicked" then
+            title_msg = "[!] YOU HAVE BEEN KICKED FROM THE SERVER"
         end
         
         tgt.setCursorPos(math.max(2, math.floor((w - #title_msg) / 2)), 4)
@@ -566,24 +568,40 @@ function UI.draw_reconnect_screen(targets, server_url, client_id, nickname, vers
         tgt.clearLine()
 
         local sub_msg
-        if retry_count and max_retries and retry_count > max_retries then
+        if mode == "kicked" then
+            tgt.setTextColor(colors.orange)
+            if error_msg and error_msg ~= "" then
+                sub_msg = "Reason: " .. tostring(error_msg):sub(1, w - 12)
+            else
+                sub_msg = "Kicked by administrator. Auto-reconnect disabled."
+            end
+        elseif retry_count and max_retries and retry_count > max_retries then
             tgt.setTextColor(colors.orange)
             sub_msg = "[!] Max retries reached (" .. tostring(max_retries) .. "/" .. tostring(max_retries) .. "). Click Reconnect."
-        else
+        elseif seconds_left then
             tgt.setTextColor(colors.yellow)
             local current_try = tostring(retry_count or 1)
             local max_try = tostring(max_retries or 5)
-            local sec = tostring(seconds_left or 60)
+            local sec = tostring(seconds_left)
             sub_msg = "Auto-retry (" .. current_try .. "/" .. max_try .. ") in " .. sec .. "s..."
+        else
+            tgt.setTextColor(colors.white)
+            sub_msg = "Press [R] or click Reconnect below to join again."
         end
 
         tgt.setCursorPos(math.max(2, math.floor((w - #sub_msg) / 2)), 5)
         tgt.write(sub_msg)
 
-        -- Row 6: Error reason (orange) if provided
+        -- Row 6: For kicked, show "Auto-reconnect disabled". For others, show error if any.
         tgt.setCursorPos(1, 6)
         tgt.clearLine()
-        if error_msg and error_msg ~= "" then
+        if mode == "kicked" then
+            tgt.setTextColor(colors.lightGray)
+            local note = "Auto-reconnect disabled. Press [R] to reconnect manually or [Q] to exit."
+            note = note:sub(1, w - 2)
+            tgt.setCursorPos(math.max(2, math.floor((w - #note) / 2)), 6)
+            tgt.write(note)
+        elseif error_msg and error_msg ~= "" then
             tgt.setTextColor(colors.orange)
             local short = tostring(error_msg):sub(1, w - 6)
             tgt.setCursorPos(math.max(2, math.floor((w - #short - 5) / 2)), 6)
